@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timedelta
 import io
 
-# ================= CONFIGURACIÓN INICIAL (CRÍTICO) =================
+# ================= CONFIGURACIÓN INICIAL =================
 st.set_page_config(
     page_title="GYM FITNESS XPLOSSION",
     page_icon="💪",
@@ -16,20 +16,18 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Inicializar variables de sesión si no existen
+# Inicializar variables de sesión
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'user_role' not in st.session_state: st.session_state['user_role'] = ""
 if 'user_name' not in st.session_state: st.session_state['user_name'] = ""
 
-# ESTILOS CSS (Optimizados para carga rápida)
+# ESTILOS CSS
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: white; }
     .stButton>button { width: 100%; border-radius: 6px; font-weight: bold; height: 3em; }
-    /* Métricas grandes y visibles */
     [data-testid="stMetricValue"] { color: #fca311; font-size: 2.8rem; }
     h1, h2, h3 { color: #fca311; font-family: sans-serif; }
-    /* Ocultar elementos innecesarios */
     #MainMenu {visibility: visible;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
@@ -64,30 +62,41 @@ def init_supabase():
 
 supabase = init_supabase()
 
-@st.cache_data(ttl=1800) # Se actualiza cada 30 min para no saturar
+# === LÓGICA DE TASA BCV MEJORADA (DOBLE FUENTE) ===
+@st.cache_data(ttl=900) # Cache de 15 minutos para mantenerla fresca
 def get_tasa_bcv():
-    """Obtiene la tasa BCV oficial sin fallos."""
+    """
+    Intenta obtener la tasa oficial de 2 fuentes distintas
+    para evitar caídas.
+    """
+    # 1. INTENTO PRIMARIO (API Rápida JSON)
     try:
-        # API Principal (Más estable)
-        url = "https://pydolarvenezuela-api.vercel.app/api/v1/dollar?page=bcv"
-        response = requests.get(url, timeout=3) # Timeout rápido para no bloquear
+        url = "https://ve.dolarapi.com/v1/dolares/oficial"
+        response = requests.get(url, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            # Accedemos directo al precio
-            price = data['monitors']['usd']['price']
-            return float(price)
-    except Exception as e:
+            return float(data['promedio'])
+    except:
         pass
-    return None # Retorna None si falla para activar modo manual
+
+    # 2. INTENTO SECUNDARIO (Respaldo)
+    try:
+        url = "https://pydolarvenezuela-api.vercel.app/api/v1/dollar?page=bcv"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return float(data['monitors']['usd']['price'])
+    except:
+        pass
+        
+    return None # Solo si ambas fallan (muy improbable)
 
 def limpiar_monto_ve(monto_input):
     if pd.isna(monto_input): return 0.0
     texto = str(monto_input).upper().replace('BS', '').strip()
-    # Detectar formato 1200.50
     if '.' in texto and ',' not in texto:
         try: return float(texto)
         except: pass
-    # Detectar formato 1.200,50
     texto = texto.replace('.', '').replace(',', '.')
     try: return float(texto)
     except: return 0.0
@@ -120,7 +129,6 @@ def generar_excel(df, tasa):
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
         fmt_head = workbook.add_format({'bold': True, 'bg_color': '#fca311', 'border': 1})
-        fmt_num = workbook.add_format({'num_format': '#,##0.00 "Bs"', 'border': 1})
         
         df_x = df.copy()
         df_x = df_x[['fecha_ve', 'referencia', 'monto_real', 'servicio', 'tipo_cliente']]
@@ -146,12 +154,12 @@ if not st.session_state['logged_in']:
                     st.session_state['logged_in'] = True
                     st.session_state['user_role'] = USUARIOS[u]["rol"]
                     st.session_state['user_name'] = USUARIOS[u]["nombre"]
-                    st.rerun() # Recarga INSTANTÁNEA
+                    st.rerun()
                 else:
                     st.error("Datos incorrectos")
-    st.stop() # Detiene la ejecución aquí si no entró
+    st.stop()
 
-# ================= DASHBOARD PRINCIPAL =================
+# ================= DASHBOARD =================
 
 # --- BARRA LATERAL ---
 with st.sidebar:
@@ -161,14 +169,14 @@ with st.sidebar:
     st.divider()
     st.markdown("### 💵 Tasa BCV")
     
-    # Lógica BCV Robusta
+    # Lógica BCV Blindada
     tasa_api = get_tasa_bcv()
     
     if tasa_api:
         tasa_calculo = tasa_api
         st.success(f"✅ Oficial: {tasa_calculo:,.2f} Bs")
     else:
-        st.warning("⚠️ API BCV Off - Modo Manual")
+        st.error("⚠️ Sin conexión BCV")
         tasa_calculo = st.number_input("Tasa Manual", value=60.00, step=0.1)
 
     st.divider()
@@ -179,23 +187,21 @@ with st.sidebar:
 # --- CUERPO ---
 st.title("🏋️‍♂️ Control GYM XPLOSSION")
 
-# Carga de datos
 raw = get_pagos()
 df = pd.DataFrame(raw) if raw else pd.DataFrame()
 
 if df.empty:
     st.info("Esperando pagos...")
-    time.sleep(5) # Auto-refresh suave si está vacío
+    time.sleep(5)
     st.rerun()
 else:
-    # Procesamiento
     df['monto_real'] = df['monto'].apply(limpiar_monto_ve)
     df['fecha_dt'] = pd.to_datetime(df['created_at'])
     if df['fecha_dt'].dt.tz is None: df['fecha_dt'] = df['fecha_dt'].dt.tz_localize('UTC')
     df['fecha_ve'] = df['fecha_dt'].dt.tz_convert('America/Caracas')
     df['fecha_fmt'] = df['fecha_ve'].dt.strftime('%d/%m %I:%M %p')
 
-    # Filtros Fecha
+    # Filtros
     hoy = datetime.now(df['fecha_ve'].dt.tz).date()
     if filtro_fecha == "Hoy": df = df[df['fecha_ve'].dt.date == hoy]
     elif filtro_fecha == "Ayer": df = df[df['fecha_ve'].dt.date == (hoy - timedelta(days=1))]
@@ -214,14 +220,13 @@ else:
     
     st.divider()
 
-    # Tabla de Pagos
+    # Tabla
     for i, row in df.iterrows():
         status = row['servicio'] and row['tipo_cliente']
-        color = "#2ecc71" if status else "#e74c3c" # Verde/Rojo plano
-        bg_card = "#1c1c1c" # Fondo tarjeta oscuro
+        color = "#2ecc71" if status else "#e74c3c"
+        bg_card = "#1c1c1c"
         
         with st.container():
-            # Diseño tarjeta personalizada
             st.markdown(f"""
             <div style="background-color:{bg_card}; padding:15px; border-radius:10px; border-left: 5px solid {color}; margin-bottom:10px;">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -237,8 +242,7 @@ else:
             </div>
             """, unsafe_allow_html=True)
             
-            # Botones de Acción (Solo mostrar expansor si se necesita editar)
-            with st.expander("🛠️ Editar / Asignar Plan"):
+            with st.expander("🛠️ Editar"):
                 c_a, c_b, c_c = st.columns([2, 2, 1])
                 
                 ix_p = PLANES.index(row['servicio']) if row['servicio'] in PLANES else 0
@@ -248,16 +252,13 @@ else:
                 nt = c_b.selectbox("Tipo", TIPOS_CLIENTE, index=ix_t, key=f"t_{row['id']}")
                 
                 if c_c.button("Guardar", key=f"s_{row['id']}"):
-                    if actualizar_pago(row['id'], np, nt):
-                        st.toast("Guardado")
-                        time.sleep(0.5)
-                        st.rerun()
+                    actualizar_pago(row['id'], np, nt)
+                    st.rerun()
                 
                 if st.session_state['user_role'] == 'admin':
-                    if st.button("Eliminar Pago", key=f"d_{row['id']}"):
+                    if st.button("Eliminar", key=f"d_{row['id']}"):
                         eliminar_pago(row['id'])
                         st.rerun()
 
-    # Auto-refresco no bloqueante
     time.sleep(10)
     st.rerun()
