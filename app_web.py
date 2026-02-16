@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="GYM FITNESS XPLOSSION",
     page_icon="💪",
     layout="wide",
-    initial_sidebar_state="expanded"  # <--- CAMBIO: Barra lateral siempre visible
+    initial_sidebar_state="expanded" # Fuerza la barra lateral abierta
 )
 
 # Inicializar variables de sesión
@@ -21,18 +21,21 @@ if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'user_role' not in st.session_state: st.session_state['user_role'] = ""
 if 'user_name' not in st.session_state: st.session_state['user_name'] = ""
 
-# ESTILOS CSS
+# ESTILOS CSS (CORREGIDO: Ya no oculta el botón del menú)
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: white; }
     .stButton>button { width: 100%; border-radius: 6px; font-weight: bold; height: 3em; }
     [data-testid="stMetricValue"] { color: #fca311; font-size: 2.8rem; }
     h1, h2, h3 { color: #fca311; font-family: sans-serif; }
-    /* Ajustes sidebar */
-    [data-testid="stSidebar"] { background-color: #161a25; }
+    
+    /* Estilo Barra Lateral */
+    [data-testid="stSidebar"] { background-color: #161a25; border-right: 1px solid #333; }
+    
+    /* Ocultar solo footer y menú hamburguesa, PERO DEJAR EL HEADER VISIBLE PARA EL MENÚ LATERAL */
     #MainMenu {visibility: visible;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+    /* header {visibility: hidden;}  <-- ESTA LINEA SE ELIMINÓ PORQUE OCULTABA EL MENÚ */
     </style>
     """, unsafe_allow_html=True)
 
@@ -64,13 +67,10 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# === LÓGICA DE TASA BCV MEJORADA (DOBLE FUENTE) ===
-@st.cache_data(ttl=900) # Cache de 15 minutos
+# === LÓGICA DE TASA BCV MEJORADA ===
+@st.cache_data(ttl=900)
 def get_tasa_bcv():
-    """
-    Intenta obtener la tasa oficial de 2 fuentes distintas.
-    """
-    # 1. INTENTO PRIMARIO (API Rápida JSON)
+    # 1. INTENTO PRIMARIO
     try:
         url = "https://ve.dolarapi.com/v1/dolares/oficial"
         response = requests.get(url, timeout=5)
@@ -79,8 +79,7 @@ def get_tasa_bcv():
             return float(data['promedio'])
     except:
         pass
-
-    # 2. INTENTO SECUNDARIO (Respaldo)
+    # 2. INTENTO SECUNDARIO
     try:
         url = "https://pydolarvenezuela-api.vercel.app/api/v1/dollar?page=bcv"
         response = requests.get(url, timeout=5)
@@ -89,7 +88,6 @@ def get_tasa_bcv():
             return float(data['monitors']['usd']['price'])
     except:
         pass
-        
     return None
 
 def limpiar_monto_ve(monto_input):
@@ -129,14 +127,11 @@ def generar_excel(df, tasa):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
-        # Formatos
         fmt_head = workbook.add_format({'bold': True, 'bg_color': '#fca311', 'border': 1})
-        
         df_x = df.copy()
         df_x = df_x[['fecha_ve', 'referencia', 'monto_real', 'servicio', 'tipo_cliente']]
         df_x.columns = ['Fecha', 'Referencia', 'Monto Bs', 'Plan', 'Tipo']
         df_x['Fecha'] = df_x['Fecha'].dt.tz_localize(None)
-        
         df_x.to_excel(writer, sheet_name='Caja Gym', index=False)
     return output.getvalue()
 
@@ -160,11 +155,11 @@ if not st.session_state['logged_in']:
                     st.rerun()
                 else:
                     st.error("Datos incorrectos")
-    st.stop() # Detiene ejecución si no hay login
+    st.stop() 
 
 # ================= DASHBOARD PRINCIPAL =================
 
-# --- BARRA LATERAL (VISIBLE AHORA) ---
+# --- BARRA LATERAL (MENU IZQUIERDO) ---
 with st.sidebar:
     st.title(f"👤 {st.session_state['user_name']}")
     st.write("---")
@@ -175,7 +170,6 @@ with st.sidebar:
     st.write("---")
     st.header("💵 Tasa BCV")
     
-    # Lógica BCV
     tasa_api = get_tasa_bcv()
     
     if tasa_api:
@@ -187,8 +181,8 @@ with st.sidebar:
         tasa_calculo = st.number_input("Tasa Manual", value=60.00, step=0.1)
 
     st.write("---")
-    # Botón Salir grande y rojo al final
-    if st.button("Cerrar Sesión", type="primary"):
+    # Usamos type="secondary" para que no compita visualmente pero sea funcional
+    if st.button("Cerrar Sesión"):
         st.session_state['logged_in'] = False
         st.rerun()
 
@@ -270,4 +264,3 @@ else:
 
     time.sleep(10)
     st.rerun()
-
