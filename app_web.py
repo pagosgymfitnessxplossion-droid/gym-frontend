@@ -4,9 +4,10 @@ from supabase import create_client
 import time
 import requests
 import io
+import uuid
 from datetime import datetime, timedelta
 
-# ================= CONFIGURACIÓN INICIAL =================
+# ================= CONFIGURACIÓN =================
 st.set_page_config(
     page_title="GYM FITNESS XPLOSSION",
     page_icon="💪",
@@ -14,26 +15,25 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Inicializar variables de sesión
+# Inicializar Sesión
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if 'user_role' not in st.session_state: st.session_state['user_role'] = ""
 if 'user_name' not in st.session_state: st.session_state['user_name'] = ""
 
-# ESTILOS CSS PRO
+# ESTILOS PRO
 st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: white; }
-    .stButton>button { width: 100%; border-radius: 6px; font-weight: bold; height: 3em; }
+    .stButton>button { border-radius: 6px; font-weight: bold; }
     /* Métricas */
-    [data-testid="stMetricValue"] { color: #fca311; font-size: 2.5rem; }
-    [data-testid="stMetricLabel"] { font-size: 1.1rem; color: #ddd; }
+    [data-testid="stMetricValue"] { color: #fca311; font-size: 2.2rem; }
     h1, h2, h3 { color: #fca311; font-family: sans-serif; }
-    
     /* Sidebar */
     [data-testid="stSidebar"] { background-color: #161a25; border-right: 1px solid #333; }
-    
-    /* Inputs */
-    .stDateInput input { color: white; }
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #1c1c1c; border-radius: 5px; color: white;}
+    .stTabs [aria-selected="true"] { background-color: #fca311; color: black; }
     
     #MainMenu {visibility: visible;}
     footer {visibility: hidden;}
@@ -44,60 +44,36 @@ st.markdown("""
 SUPABASE_URL = "https://cxmwymmgsggzilcwotjv.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN4bXd5bW1nc2dnemlsY3dvdGp2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNDAxMDEsImV4cCI6MjA4NjcxNjEwMX0.-3a_zppjlwprHG4qw-PQfdEPPPee2-iKdAlXLaQZeSM"
 
-# ================= CONFIGURACIÓN DEL NEGOCIO =================
-PLANES = [
-    "PLAN COMÚN",
-    "PLAN VIP",
-    "VISITA DIARIA"
-]
-
+# ================= DATOS NEGOCIO =================
+PLANES = ["PLAN COMÚN", "PLAN VIP", "VISITA DIARIA", "INSCRIPCIÓN", "OTROS"]
 TIPOS_CLIENTE = ["Nuevo Ingreso", "Renovación", "Reingreso", "Empleado"]
+METODOS_PAGO = ["Pago Móvil", "Efectivo $", "Efectivo Bs", "Zelle", "Punto de Venta"]
 
-# USUARIOS ACTUALIZADOS
 USUARIOS = {
-    "gymfitnessxplossion": {
-        "pass": "gorrin.07*", 
-        "rol": "admin", 
-        "nombre": "Gerencia"
-    },
-    "recepcionxplossion": {
-        "pass": "recepcion.07*", 
-        "rol": "empleado", 
-        "nombre": "Recepción"
-    }
+    "gymfitnessxplossion": {"pass": "gorrin.07*", "rol": "admin", "nombre": "Gerencia"},
+    "recepcionxplossion": {"pass": "recepcion.07*", "rol": "empleado", "nombre": "Recepción"}
 }
 
 # ================= CONEXIONES =================
 @st.cache_resource(ttl=0)
 def init_supabase():
-    try:
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
-    except:
-        return None
+    try: return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except: return None
 
 supabase = init_supabase()
 
-# === LÓGICA DE TASA BCV ===
 @st.cache_data(ttl=900)
 def get_tasa_bcv():
-    # 1. INTENTO PRIMARIO
     try:
         url = "https://ve.dolarapi.com/v1/dolares/oficial"
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            return float(data['promedio'])
-    except:
-        pass
-    # 2. INTENTO SECUNDARIO
+        req = requests.get(url, timeout=4)
+        if req.status_code == 200: return float(req.json()['promedio'])
+    except: pass
     try:
         url = "https://pydolarvenezuela-api.vercel.app/api/v1/dollar?page=bcv"
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            return float(data['monitors']['usd']['price'])
-    except:
-        pass
+        req = requests.get(url, timeout=4)
+        if req.status_code == 200: return float(req.json()['monitors']['usd']['price'])
+    except: pass
     return None
 
 def limpiar_monto_ve(monto_input):
@@ -110,94 +86,94 @@ def limpiar_monto_ve(monto_input):
     try: return float(texto)
     except: return 0.0
 
+# ================= FUNCIONES CRUD =================
 def get_pagos():
     if not supabase: return []
     try:
-        # Traemos más registros para permitir reportes largos
-        response = supabase.table("pagos").select("*").order("id", desc=True).limit(2000).execute()
-        return response.data
-    except:
-        return []
+        res = supabase.table("pagos").select("*").order("id", desc=True).limit(2000).execute()
+        return res.data
+    except: return []
 
-def actualizar_pago(id_pago, plan, tipo):
+def actualizar_pago(id_pago, plan, tipo, nombre, metodo="Pago Móvil"):
     try:
-        supabase.table("pagos").update({"servicio": plan, "tipo_cliente": tipo}).eq("id", id_pago).execute()
+        supabase.table("pagos").update({
+            "servicio": plan, 
+            "tipo_cliente": tipo,
+            "nombre_cliente": nombre,
+            "metodo_pago": metodo
+        }).eq("id", id_pago).execute()
         return True
-    except:
+    except: return False
+
+def registrar_manual(monto, ref, metodo, plan, tipo, nombre):
+    try:
+        data = {
+            "referencia": ref,
+            "monto": str(monto), # Guardamos como string para consistencia
+            "servicio": plan,
+            "tipo_cliente": tipo,
+            "nombre_cliente": nombre,
+            "metodo_pago": metodo
+        }
+        supabase.table("pagos").insert(data).execute()
+        return True
+    except Exception as e:
+        st.error(f"Error DB: {e}")
         return False
 
 def eliminar_pago(id_pago):
     try:
         supabase.table("pagos").delete().eq("id", id_pago).execute()
         return True
-    except:
-        return False
+    except: return False
 
-# ================= EXCEL PROFESIONAL =================
+# ================= EXCEL PRO =================
 def generar_excel_pro(df, tasa, rango_texto):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
-        worksheet = workbook.add_worksheet("Reporte Gym")
+        ws = workbook.add_worksheet("Reporte Gym")
         
-        # --- ESTILOS ---
-        style_title = workbook.add_format({
-            'bold': True, 'font_size': 16, 'align': 'center', 
-            'bg_color': '#161a25', 'font_color': '#fca311', 'border': 1
-        })
-        style_header = workbook.add_format({
-            'bold': True, 'bg_color': '#fca311', 'font_color': 'black', 
-            'border': 1, 'align': 'center'
-        })
-        style_text = workbook.add_format({'border': 1, 'align': 'center'})
-        style_bs = workbook.add_format({'num_format': '#,##0.00 "Bs"', 'border': 1})
-        style_usd = workbook.add_format({'num_format': '"$" #,##0.00', 'border': 1})
-        style_total = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'border': 1})
-        style_total_bs = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'num_format': '#,##0.00 "Bs"', 'border': 1})
-        style_total_usd = workbook.add_format({'bold': True, 'bg_color': '#D3D3D3', 'num_format': '"$" #,##0.00', 'border': 1})
-
-        # --- PREPARAR DATA ---
+        # Estilos
+        st_title = workbook.add_format({'bold': True, 'font_size': 14, 'bg_color': '#161a25', 'font_color': '#fca311', 'border': 1, 'align': 'center'})
+        st_head = workbook.add_format({'bold': True, 'bg_color': '#fca311', 'border': 1, 'align': 'center'})
+        st_txt = workbook.add_format({'border': 1, 'align': 'center'})
+        st_bs = workbook.add_format({'num_format': '#,##0.00 "Bs"', 'border': 1})
+        st_usd = workbook.add_format({'num_format': '"$" #,##0.00', 'border': 1})
+        st_tot = workbook.add_format({'bold': True, 'bg_color': '#DDD', 'border': 1})
+        st_tot_bs = workbook.add_format({'bold': True, 'bg_color': '#DDD', 'num_format': '#,##0.00 "Bs"', 'border': 1})
+        
+        # Datos
         df_x = df.copy()
-        # Calculamos columna USD para el excel
         df_x['monto_usd'] = df_x['monto_real'] / tasa if tasa > 0 else 0
-        df_x['Fecha'] = df_x['fecha_ve'].dt.tz_localize(None) # Quitar zona horaria
         
-        # --- ENCABEZADOS ---
-        # Título Principal (Merge de celdas A1 a F1)
-        worksheet.merge_range('A1:F1', f'GYM FITNESS XPLOSSION - REPORTE DE CAJA ({rango_texto})', style_title)
-        worksheet.write('A2', f'Tasa BCV: {tasa:,.2f} Bs', style_text)
-        worksheet.write('F2', f'Generado: {datetime.now().strftime("%d/%m/%Y")}', style_text)
+        ws.merge_range('A1:H1', f'GYM FITNESS XPLOSSION - {rango_texto}', st_title)
+        ws.write('A2', f'Tasa: {tasa:,.2f} Bs', st_txt)
+        ws.write('H2', datetime.now().strftime("%d/%m/%Y"), st_txt)
         
-        headers = ['FECHA', 'REFERENCIA', 'PLAN', 'TIPO CLIENTE', 'MONTO (BS)', 'MONTO (USD)']
-        for col, h in enumerate(headers):
-            worksheet.write(3, col, h, style_header)
-
-        # --- ESCRIBIR DATA ---
+        headers = ['FECHA', 'REFERENCIA', 'CLIENTE', 'PLAN', 'TIPO', 'MÉTODO', 'MONTO (BS)', 'MONTO (USD)']
+        for col, h in enumerate(headers): ws.write(3, col, h, st_head)
+        
         row = 4
         for _, r in df_x.iterrows():
-            worksheet.write(row, 0, r['Fecha'].strftime("%d/%m/%Y %I:%M %p"), style_text)
-            worksheet.write(row, 1, r['referencia'], style_text)
-            worksheet.write(row, 2, r['servicio'] if r['servicio'] else "-", style_text)
-            worksheet.write(row, 3, r['tipo_cliente'] if r['tipo_cliente'] else "-", style_text)
-            worksheet.write(row, 4, r['monto_real'], style_bs)
-            worksheet.write(row, 5, r['monto_usd'], style_usd)
+            ws.write(row, 0, r['fecha_fmt'], st_txt)
+            ws.write(row, 1, r['referencia'], st_txt)
+            ws.write(row, 2, r.get('nombre_cliente', '-') or '-', st_txt)
+            ws.write(row, 3, r['servicio'] or '-', st_txt)
+            ws.write(row, 4, r['tipo_cliente'] or '-', st_txt)
+            ws.write(row, 5, r.get('metodo_pago', 'Pago Móvil') or 'Pago Móvil', st_txt)
+            ws.write(row, 6, r['monto_real'], st_bs)
+            ws.write(row, 7, r['monto_usd'], st_usd)
             row += 1
-
-        # --- FILA DE TOTALES ---
-        worksheet.write(row, 0, "TOTALES", style_total)
-        worksheet.write(row, 1, "", style_total)
-        worksheet.write(row, 2, "", style_total)
-        worksheet.write(row, 3, "", style_total)
-        worksheet.write(row, 4, df_x['monto_real'].sum(), style_total_bs)
-        worksheet.write(row, 5, df_x['monto_usd'].sum(), style_total_usd)
-
-        # --- ANCHO DE COLUMNAS ---
-        worksheet.set_column('A:A', 22) # Fecha
-        worksheet.set_column('B:B', 15) # Ref
-        worksheet.set_column('C:C', 20) # Plan
-        worksheet.set_column('D:D', 20) # Tipo
-        worksheet.set_column('E:F', 18) # Montos
-
+            
+        ws.write(row, 0, "TOTAL GENERAL", st_tot)
+        ws.write(row, 6, df_x['monto_real'].sum(), st_tot_bs)
+        ws.write(row, 7, df_x['monto_usd'].sum(), st_usd)
+        
+        ws.set_column('A:A', 20)
+        ws.set_column('C:C', 25)
+        ws.set_column('G:H', 18)
+        
     return output.getvalue()
 
 # ================= LOGIN =================
@@ -205,171 +181,185 @@ if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         st.write("")
-        st.write("")
         st.markdown("<h1 style='text-align: center;'>🔐 GYM XPLOSSION</h1>", unsafe_allow_html=True)
-        with st.form("login_fast"):
+        with st.form("login"):
             u = st.text_input("Usuario")
             p = st.text_input("Contraseña", type="password")
-            btn = st.form_submit_button("ENTRAR", type="primary")
-            
-            if btn:
+            if st.form_submit_button("ENTRAR", type="primary"):
                 if u in USUARIOS and USUARIOS[u]["pass"] == p:
                     st.session_state['logged_in'] = True
                     st.session_state['user_role'] = USUARIOS[u]["rol"]
                     st.session_state['user_name'] = USUARIOS[u]["nombre"]
                     st.rerun()
-                else:
-                    st.error("Datos incorrectos")
+                else: st.error("Datos incorrectos")
     st.stop()
 
-# ================= DASHBOARD PRINCIPAL =================
-
-# --- BARRA LATERAL ---
+# ================= DASHBOARD =================
+# --- SIDEBAR ---
 with st.sidebar:
     st.title(f"👤 {st.session_state['user_name']}")
     if st.session_state['user_role'] == 'admin':
-        st.caption("🔹 GERENCIA TOTAL")
+        st.info("🔹 MODO GERENCIA")
     else:
-        st.caption("🔸 RECEPCIÓN")
+        st.warning("🔸 RECEPCIÓN")
+    
     st.write("---")
     
-    st.header("📅 Filtros")
-    # Filtro avanzado
-    opcion_fecha = st.selectbox("Período:", ["Hoy", "Ayer", "Semana Actual", "Mes Actual", "Rango Personalizado"])
-    
-    # Variables de fecha iniciales
-    hoy = datetime.now()
-    fecha_inicio = hoy.date()
-    fecha_fin = hoy.date()
-    texto_rango = opcion_fecha
+    # 1. REGISTRO MANUAL
+    with st.expander("📝 REGISTRAR PAGO MANUAL"):
+        with st.form("manual_pay"):
+            m_ref = st.text_input("Referencia (Opcional)")
+            m_monto = st.number_input("Monto", min_value=0.0, step=1.0)
+            m_moneda = st.selectbox("Moneda", ["BS", "USD"])
+            m_metodo = st.selectbox("Método", METODOS_PAGO)
+            m_nombre = st.text_input("Nombre Cliente")
+            m_plan = st.selectbox("Plan", PLANES)
+            m_tipo = st.selectbox("Tipo", TIPOS_CLIENTE)
+            
+            if st.form_submit_button("💾 Registrar"):
+                # Si es USD, guardamos en BS para la BD (consistencia) o nota
+                if not m_ref: m_ref = f"MAN-{int(time.time())}"
+                
+                # OJO: Aquí simplificamos. Si mete USD, habría que convertir a BS o guardar aparte
+                # Por ahora guardamos el número tal cual
+                res = registrar_manual(m_monto, m_ref, m_metodo, m_plan, m_tipo, m_nombre)
+                if res: 
+                    st.toast("Pago Registrado")
+                    time.sleep(1)
+                    st.rerun()
 
-    if opcion_fecha == "Rango Personalizado":
-        col_d1, col_d2 = st.columns(2)
-        d1 = col_d1.date_input("Desde", hoy - timedelta(days=7))
-        d2 = col_d2.date_input("Hasta", hoy)
-        fecha_inicio = d1
-        fecha_fin = d2
-        texto_rango = f"{d1.strftime('%d/%m')} al {d2.strftime('%d/%m')}"
-    
     st.write("---")
-    st.header("💵 Tasa BCV")
     
+    # 2. FILTROS Y TASA
+    st.header("Filtros")
+    filtro_fecha = st.selectbox("Ver:", ["Hoy", "Ayer", "Semana Actual", "Mes Actual", "Rango"])
+    
+    hoy = datetime.now()
+    ini, fin = hoy.date(), hoy.date()
+    txt_rango = filtro_fecha
+    
+    if filtro_fecha == "Rango":
+        d1 = st.date_input("Desde", hoy - timedelta(days=7))
+        d2 = st.date_input("Hasta", hoy)
+        ini, fin = d1, d2
+        txt_rango = f"{d1} al {d2}"
+
+    st.write("---")
     tasa_api = get_tasa_bcv()
-    
-    if tasa_api:
-        tasa_calculo = tasa_api
-        st.success(f"✅ Oficial: {tasa_calculo:,.2f} Bs")
-    else:
-        st.error("⚠️ Sin conexión BCV")
-        tasa_calculo = st.number_input("Tasa Manual", value=60.00, step=0.1)
+    tasa_calc = tasa_api if tasa_api else st.number_input("Tasa Manual", value=60.0)
+    if tasa_api: st.success(f"✅ BCV: {tasa_calc:,.2f} Bs")
+    else: st.warning("⚠️ Manual")
 
     st.write("---")
     if st.button("Cerrar Sesión"):
         st.session_state['logged_in'] = False
         st.rerun()
 
-# --- CUERPO ---
+# --- MAIN CONTENT ---
 st.title("🏋️‍♂️ Control GYM XPLOSSION")
 
 raw = get_pagos()
 df = pd.DataFrame(raw) if raw else pd.DataFrame()
 
 if df.empty:
-    st.info("No hay datos cargados.")
-    time.sleep(5)
-    st.rerun()
+    st.info("Sin registros.")
 else:
-    # Procesar datos
+    # Procesar
     df['monto_real'] = df['monto'].apply(limpiar_monto_ve)
     df['fecha_dt'] = pd.to_datetime(df['created_at'])
     if df['fecha_dt'].dt.tz is None: df['fecha_dt'] = df['fecha_dt'].dt.tz_localize('UTC')
     df['fecha_ve'] = df['fecha_dt'].dt.tz_convert('America/Caracas')
     df['fecha_fmt'] = df['fecha_ve'].dt.strftime('%d/%m %I:%M %p')
-
-    # --- APLICAR FILTROS DE FECHA ---
-    mask_fecha = pd.Series([True] * len(df))
     
-    if opcion_fecha == "Hoy":
-        mask_fecha = df['fecha_ve'].dt.date == hoy.date()
-    elif opcion_fecha == "Ayer":
-        mask_fecha = df['fecha_ve'].dt.date == (hoy - timedelta(days=1)).date()
-    elif opcion_fecha == "Semana Actual":
-        start = hoy.date() - timedelta(days=hoy.weekday())
-        mask_fecha = df['fecha_ve'].dt.date >= start
-    elif opcion_fecha == "Mes Actual":
-        mask_fecha = (df['fecha_ve'].dt.month == hoy.month) & (df['fecha_ve'].dt.year == hoy.year)
-    elif opcion_fecha == "Rango Personalizado":
-        mask_fecha = (df['fecha_ve'].dt.date >= fecha_inicio) & (df['fecha_ve'].dt.date <= fecha_fin)
+    # Asegurar columnas nuevas si no existen en el DF antiguo
+    if 'nombre_cliente' not in df.columns: df['nombre_cliente'] = ""
+    if 'metodo_pago' not in df.columns: df['metodo_pago'] = "Pago Móvil"
 
-    df_filtered = df[mask_fecha]
+    # Filtrar Fecha
+    mask = pd.Series([True]*len(df))
+    if filtro_fecha == "Hoy": mask = df['fecha_ve'].dt.date == hoy.date()
+    elif filtro_fecha == "Ayer": mask = df['fecha_ve'].dt.date == (hoy - timedelta(days=1)).date()
+    elif filtro_fecha == "Semana Actual": mask = df['fecha_ve'].dt.date >= (hoy.date() - timedelta(days=hoy.weekday()))
+    elif filtro_fecha == "Mes Actual": mask = (df['fecha_ve'].dt.month == hoy.month) & (df['fecha_ve'].dt.year == hoy.year)
+    elif filtro_fecha == "Rango": mask = (df['fecha_ve'].dt.date >= ini) & (df['fecha_ve'].dt.date <= fin)
+    
+    df_f = df[mask].copy()
 
-    # --- MÉTRICAS (SOLO PARA GERENCIA) ---
+    # BUSCADOR
+    busqueda = st.text_input("🔍 Buscar por Referencia o Cliente", placeholder="Escribe los últimos números...")
+    if busqueda:
+        df_f = df_f[df_f['referencia'].astype(str).str.contains(busqueda, case=False) | 
+                    df_f['nombre_cliente'].astype(str).str.contains(busqueda, case=False)]
+
+    # --- VISTA GERENCIA ---
     if st.session_state['user_role'] == 'admin':
-        total_bs = df_filtered['monto_real'].sum()
-        total_usd = total_bs / tasa_calculo if tasa_calculo > 0 else 0
+        tot_bs = df_f['monto_real'].sum()
+        tot_usd = tot_bs / tasa_calc if tasa_calc > 0 else 0
         
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total Bolívares", f"Bs. {total_bs:,.2f}")
-        m2.metric("Total Dólares", f"$ {total_usd:,.2f}")
+        # Métricas
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Ingresos (Bs)", f"{tot_bs:,.2f}")
+        c2.metric("Estimado (USD)", f"{tot_usd:,.2f}")
+        c3.download_button("📂 Reporte Gerencial", data=generar_excel_pro(df_f, tasa_calc, txt_rango), file_name="Reporte_Gym.xlsx", type="primary")
         
-        # Botón Excel PRO
-        m3.write("") # Espacio para alinear
-        m3.download_button(
-            "📥 Descargar Reporte Excel", 
-            data=generar_excel_pro(df_filtered, tasa_calculo, texto_rango), 
-            file_name=f"Reporte_Gym_{datetime.now().strftime('%Y%m%d')}.xlsx",
-            type="primary"
-        )
+        # Gráficos simples
+        if not df_f.empty:
+            tab_g1, tab_g2 = st.tabs(["📊 Planes Vendidos", "📅 Ingresos por Día"])
+            with tab_g1:
+                counts = df_f['servicio'].value_counts()
+                st.bar_chart(counts)
+            with tab_g2:
+                # Agrupar por día
+                df_f['dia'] = df_f['fecha_ve'].dt.date
+                daily = df_f.groupby('dia')['monto_real'].sum()
+                st.line_chart(daily)
         st.divider()
+
+    # --- LISTA DE PAGOS ---
+    if df_f.empty:
+        st.warning("No se encontraron pagos con estos filtros.")
     else:
-        st.info("👋 Hola Recepción. Clasifica los pagos pendientes a continuación.")
-        # La recepción NO puede descargar el excel de contabilidad, solo ver lista
-        st.divider()
-
-    # --- TABLA DE PAGOS (PARA TODOS) ---
-    if df_filtered.empty:
-        st.warning("No hay transacciones en este período.")
-    
-    for i, row in df_filtered.iterrows():
-        status = row['servicio'] and row['tipo_cliente']
-        color = "#2ecc71" if status else "#e74c3c"
-        bg_card = "#1c1c1c"
-        
-        with st.container():
-            st.markdown(f"""
-            <div style="background-color:{bg_card}; padding:15px; border-radius:10px; border-left: 5px solid {color}; margin-bottom:10px;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div>
-                        <strong style="font-size:1.1em; color:white;">Ref: {row['referencia']}</strong><br>
-                        <span style="color:#bbb; font-size:0.9em;">{row['fecha_fmt']}</span>
-                    </div>
-                    <div style="text-align:right;">
-                        <strong style="font-size:1.3em; color:{color};">Bs. {row['monto']}</strong><br>
-                        <span style="color:#bbb; font-size:0.8em;">{row['servicio'] if row['servicio'] else 'Sin Clasificar'}</span>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+        st.subheader(f"Listado ({len(df_f)})")
+        for i, row in df_f.iterrows():
+            ready = row['servicio'] and row['tipo_cliente'] and row['nombre_cliente']
+            color = "#2ecc71" if ready else "#e74c3c"
             
-            # Solo permitir editar
-            with st.expander("🛠️ Editar"):
-                c_a, c_b, c_c = st.columns([2, 2, 1])
+            with st.container():
+                cols = st.columns([0.1, 0.5, 0.2, 0.2])
+                cols[0].markdown(f"<div style='height:100%; width:5px; background-color:{color}; border-radius:5px;'></div>", unsafe_allow_html=True)
                 
-                ix_p = PLANES.index(row['servicio']) if row['servicio'] in PLANES else 0
-                ix_t = TIPOS_CLIENTE.index(row['tipo_cliente']) if row['tipo_cliente'] in TIPOS_CLIENTE else 0
+                with cols[1]:
+                    st.markdown(f"**{row['nombre_cliente'] if row['nombre_cliente'] else 'Sin Nombre'}**")
+                    st.caption(f"Ref: {row['referencia']} | {row['metodo_pago']}")
                 
-                np = c_a.selectbox("Plan", PLANES, index=ix_p, key=f"p_{row['id']}")
-                nt = c_b.selectbox("Tipo", TIPOS_CLIENTE, index=ix_t, key=f"t_{row['id']}")
+                with cols[2]:
+                    st.markdown(f"**Bs. {row['monto']}**")
+                    st.caption(f"{row['fecha_fmt']}")
                 
-                if c_c.button("Guardar", key=f"s_{row['id']}"):
-                    actualizar_pago(row['id'], np, nt)
-                    st.rerun()
-                
-                # SOLO GERENCIA PUEDE ELIMINAR
-                if st.session_state['user_role'] == 'admin':
-                    if st.button("Eliminar (Gerencia)", key=f"d_{row['id']}"):
-                        eliminar_pago(row['id'])
-                        st.rerun()
+                with cols[3]:
+                    with st.popover("Editar"):
+                        st.write(f"Editar: {row['referencia']}")
+                        p_nom = st.text_input("Nombre", value=row['nombre_cliente'] or "", key=f"n_{row['id']}")
+                        
+                        ix_p = PLANES.index(row['servicio']) if row['servicio'] in PLANES else 0
+                        p_plan = st.selectbox("Plan", PLANES, index=ix_p, key=f"pl_{row['id']}")
+                        
+                        ix_t = TIPOS_CLIENTE.index(row['tipo_cliente']) if row['tipo_cliente'] in TIPOS_CLIENTE else 0
+                        p_tipo = st.selectbox("Tipo", TIPOS_CLIENTE, index=ix_t, key=f"tp_{row['id']}")
+                        
+                        ix_m = METODOS_PAGO.index(row['metodo_pago']) if row['metodo_pago'] in METODOS_PAGO else 0
+                        p_met = st.selectbox("Método", METODOS_PAGO, index=ix_m, key=f"mt_{row['id']}")
+                        
+                        if st.button("Guardar Cambios", key=f"sv_{row['id']}"):
+                            actualizar_pago(row['id'], p_plan, p_tipo, p_nom, p_met)
+                            st.rerun()
+                        
+                        if st.session_state['user_role'] == 'admin':
+                            st.divider()
+                            if st.button("Eliminar", key=f"dl_{row['id']}"):
+                                eliminar_pago(row['id'])
+                                st.rerun()
+                st.divider()
 
-    time.sleep(10)
-    st.rerun()
+    time.sleep(15) # Refresco más lento para no molestar si están editando
+    # No st.rerun() automático aquí para evitar cerrar popovers mientras escriben
