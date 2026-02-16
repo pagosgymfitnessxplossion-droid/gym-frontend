@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="GYM FITNESS XPLOSSION",
     page_icon="💪",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"  # <--- CAMBIO: Barra lateral siempre visible
 )
 
 # Inicializar variables de sesión
@@ -28,6 +28,8 @@ st.markdown("""
     .stButton>button { width: 100%; border-radius: 6px; font-weight: bold; height: 3em; }
     [data-testid="stMetricValue"] { color: #fca311; font-size: 2.8rem; }
     h1, h2, h3 { color: #fca311; font-family: sans-serif; }
+    /* Ajustes sidebar */
+    [data-testid="stSidebar"] { background-color: #161a25; }
     #MainMenu {visibility: visible;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
@@ -63,11 +65,10 @@ def init_supabase():
 supabase = init_supabase()
 
 # === LÓGICA DE TASA BCV MEJORADA (DOBLE FUENTE) ===
-@st.cache_data(ttl=900) # Cache de 15 minutos para mantenerla fresca
+@st.cache_data(ttl=900) # Cache de 15 minutos
 def get_tasa_bcv():
     """
-    Intenta obtener la tasa oficial de 2 fuentes distintas
-    para evitar caídas.
+    Intenta obtener la tasa oficial de 2 fuentes distintas.
     """
     # 1. INTENTO PRIMARIO (API Rápida JSON)
     try:
@@ -89,7 +90,7 @@ def get_tasa_bcv():
     except:
         pass
         
-    return None # Solo si ambas fallan (muy improbable)
+    return None
 
 def limpiar_monto_ve(monto_input):
     if pd.isna(monto_input): return 0.0
@@ -128,6 +129,7 @@ def generar_excel(df, tasa):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
+        # Formatos
         fmt_head = workbook.add_format({'bold': True, 'bg_color': '#fca311', 'border': 1})
         
         df_x = df.copy()
@@ -138,10 +140,11 @@ def generar_excel(df, tasa):
         df_x.to_excel(writer, sheet_name='Caja Gym', index=False)
     return output.getvalue()
 
-# ================= LOGIN RÁPIDO =================
+# ================= LOGIN =================
 if not st.session_state['logged_in']:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
+        st.write("")
         st.write("")
         st.markdown("<h1 style='text-align: center;'>🔐 GYM XPLOSSION</h1>", unsafe_allow_html=True)
         with st.form("login_fast"):
@@ -157,30 +160,35 @@ if not st.session_state['logged_in']:
                     st.rerun()
                 else:
                     st.error("Datos incorrectos")
-    st.stop()
+    st.stop() # Detiene ejecución si no hay login
 
-# ================= DASHBOARD =================
+# ================= DASHBOARD PRINCIPAL =================
 
-# --- BARRA LATERAL ---
+# --- BARRA LATERAL (VISIBLE AHORA) ---
 with st.sidebar:
-    st.markdown(f"### 👤 {st.session_state['user_name']}")
-    filtro_fecha = st.selectbox("📅 Período", ["Hoy", "Ayer", "Semana Actual", "Todo"])
+    st.title(f"👤 {st.session_state['user_name']}")
+    st.write("---")
     
-    st.divider()
-    st.markdown("### 💵 Tasa BCV")
+    st.header("📅 Filtros")
+    filtro_fecha = st.selectbox("Período:", ["Hoy", "Ayer", "Semana Actual", "Todo"])
     
-    # Lógica BCV Blindada
+    st.write("---")
+    st.header("💵 Tasa BCV")
+    
+    # Lógica BCV
     tasa_api = get_tasa_bcv()
     
     if tasa_api:
         tasa_calculo = tasa_api
         st.success(f"✅ Oficial: {tasa_calculo:,.2f} Bs")
+        st.caption("Actualizado Automáticamente")
     else:
         st.error("⚠️ Sin conexión BCV")
         tasa_calculo = st.number_input("Tasa Manual", value=60.00, step=0.1)
 
-    st.divider()
-    if st.button("Salir"):
+    st.write("---")
+    # Botón Salir grande y rojo al final
+    if st.button("Cerrar Sesión", type="primary"):
         st.session_state['logged_in'] = False
         st.rerun()
 
@@ -262,3 +270,4 @@ else:
 
     time.sleep(10)
     st.rerun()
+
