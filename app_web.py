@@ -4,7 +4,7 @@ from supabase import create_client
 import time
 import requests
 import io
-import plotly.express as px  # NUEVO: Para gráficas profesionales
+import plotly.express as px
 from datetime import datetime, timedelta
 
 # ================= CONFIGURACIÓN =================
@@ -31,7 +31,7 @@ st.markdown("""
     /* Sidebar */
     [data-testid="stSidebar"] { background-color: #161a25; border-right: 1px solid #333; }
     /* Inputs */
-    .stTextInput input, .stSelectbox, .stDateInput input {
+    .stTextInput input, .stSelectbox, .stDateInput input, .stNumberInput input {
         background-color: #1c1c1c !important; 
         color: white !important;
     }
@@ -45,9 +45,9 @@ SUPABASE_URL = "https://cxmwymmgsggzilcwotjv.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN4bXd5bW1nc2dnemlsY3dvdGp2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExNDAxMDEsImV4cCI6MjA4NjcxNjEwMX0.-3a_zppjlwprHG4qw-PQfdEPPPee2-iKdAlXLaQZeSM"
 
 # ================= DATOS NEGOCIO =================
-PLANES = ["PLAN COMÚN", "PLAN VIP", "VISITA DIARIA", "INSCRIPCIÓN", "OTROS"]
+PLANES = ["PLAN COMÚN", "PLAN VIP", "VISITA DIARIA"] # Eliminada Inscripción
 TIPOS_CLIENTE = ["Nuevo Ingreso", "Renovación", "Reingreso", "Empleado"]
-METODOS_PAGO = ["Pago Móvil", "Efectivo $", "Efectivo Bs", "Zelle", "Punto de Venta"]
+METODOS_PAGO = ["EFECTIVO $", "EFECTIVO BS", "ZELLE", "PUNTO DE VENTA"]
 
 USUARIOS = {
     "gymfitnessxplossion": {"pass": "gorrin.07*", "rol": "admin", "nombre": "Gerencia"},
@@ -62,7 +62,7 @@ def init_supabase():
 
 supabase = init_supabase()
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=300) # 5 min cache para tasa más fresca
 def get_tasa_bcv():
     try:
         url = "https://ve.dolarapi.com/v1/dolares/oficial"
@@ -77,11 +77,14 @@ def get_tasa_bcv():
     return None
 
 def limpiar_monto_ve(monto_input):
+    """Convierte cualquier formato de texto a float BS"""
     if pd.isna(monto_input): return 0.0
     texto = str(monto_input).upper().replace('BS', '').strip()
+    # Caso 1200.50
     if '.' in texto and ',' not in texto:
         try: return float(texto)
         except: pass
+    # Caso 1.200,50
     texto = texto.replace('.', '').replace(',', '.')
     try: return float(texto)
     except: return 0.0
@@ -94,7 +97,6 @@ def get_pagos():
         return res.data
     except: return []
 
-# ACTUALIZADO CON CÉDULA
 def actualizar_pago(id_pago, plan, tipo, nombre, cedula, metodo="Pago Móvil"):
     try:
         supabase.table("pagos").update({
@@ -107,12 +109,11 @@ def actualizar_pago(id_pago, plan, tipo, nombre, cedula, metodo="Pago Móvil"):
         return True
     except: return False
 
-# ACTUALIZADO CON CÉDULA
-def registrar_manual(monto, ref, metodo, plan, tipo, nombre, cedula):
+def registrar_manual(monto_bs, ref, metodo, plan, tipo, nombre, cedula):
     try:
         data = {
             "referencia": ref,
-            "monto": str(monto),
+            "monto": f"{monto_bs:.2f}", # Guardamos siempre en BS string para consistencia
             "servicio": plan,
             "tipo_cliente": tipo,
             "nombre_cliente": nombre,
@@ -131,7 +132,7 @@ def eliminar_pago(id_pago):
         return True
     except: return False
 
-# ================= EXCEL PRO (CON CÉDULA) =================
+# ================= EXCEL PRO =================
 def generar_excel_pro(df, tasa, rango_texto):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
@@ -153,8 +154,7 @@ def generar_excel_pro(df, tasa, rango_texto):
         ws.write('A2', f'Tasa: {tasa:,.2f} Bs', st_txt)
         ws.write('I2', datetime.now().strftime("%d/%m/%Y"), st_txt)
         
-        # Encabezados con Cédula
-        headers = ['FECHA', 'REFERENCIA', 'CÉDULA', 'CLIENTE', 'PLAN', 'TIPO', 'MÉTODO', 'MONTO (BS)', 'MONTO (USD)']
+        headers = ['FECHA/HORA', 'REFERENCIA', 'CÉDULA', 'CLIENTE', 'PLAN', 'TIPO', 'MÉTODO', 'MONTO (BS)', 'MONTO (USD)']
         for col, h in enumerate(headers): ws.write(3, col, h, st_head)
         
         row = 4
@@ -165,7 +165,7 @@ def generar_excel_pro(df, tasa, rango_texto):
             ws.write(row, 3, r.get('nombre_cliente', '-') or '-', st_txt)
             ws.write(row, 4, r['servicio'] or '-', st_txt)
             ws.write(row, 5, r['tipo_cliente'] or '-', st_txt)
-            ws.write(row, 6, r.get('metodo_pago', 'Pago Móvil') or 'Pago Móvil', st_txt)
+            ws.write(row, 6, r.get('metodo_pago', '-') or '-', st_txt)
             ws.write(row, 7, r['monto_real'], st_bs)
             ws.write(row, 8, r['monto_usd'], st_usd)
             row += 1
@@ -174,7 +174,7 @@ def generar_excel_pro(df, tasa, rango_texto):
         ws.write(row, 7, df_x['monto_real'].sum(), st_bs)
         ws.write(row, 8, df_x['monto_usd'].sum(), st_usd)
         
-        ws.set_column('A:A', 20)
+        ws.set_column('A:A', 22)
         ws.set_column('D:D', 25)
         ws.set_column('G:I', 18)
         
@@ -204,26 +204,44 @@ with st.sidebar:
     st.caption("🔸 GERENCIA" if st.session_state['user_role'] == 'admin' else "🔸 RECEPCIÓN")
     st.write("---")
     
-    # REGISTRO MANUAL CON CÉDULA
-    with st.expander("📝 REGISTRAR PAGO MANUAL"):
+    # === TASA BCV PRIMERO ===
+    tasa_api = get_tasa_bcv()
+    tasa_calc = tasa_api if tasa_api else st.number_input("Tasa Manual", value=60.0)
+    if tasa_api: 
+        st.success(f"✅ BCV: {tasa_calc:,.2f} Bs")
+    else: 
+        st.warning("⚠️ Manual")
+    st.write("---")
+
+    # === REGISTRO MANUAL ===
+    with st.expander("📝 REGISTRO MANUAL", expanded=False):
         with st.form("manual_pay"):
-            st.write("Datos del Cliente")
-            m_ced = st.text_input("Cédula de Identidad")
-            m_nombre = st.text_input("Nombre Completo")
-            st.write("Datos del Pago")
-            c_a, c_b = st.columns(2)
-            m_monto = c_a.number_input("Monto", min_value=0.0, step=1.0)
-            m_ref = c_b.text_input("Ref (Opcional)")
+            st.caption("Datos del Cliente")
+            m_ced = st.text_input("C.I.")
+            m_nombre = st.text_input("Nombre")
+            
+            st.caption("Pago")
+            col_m1, col_m2 = st.columns(2)
+            moneda_pago = col_m1.selectbox("Moneda", ["BS", "USD"])
+            m_monto_input = col_m2.number_input("Monto", min_value=0.0, step=1.0)
+            
+            m_ref = st.text_input("Referencia")
             m_metodo = st.selectbox("Método", METODOS_PAGO)
             m_plan = st.selectbox("Plan", PLANES)
             m_tipo = st.selectbox("Tipo", TIPOS_CLIENTE)
             
-            if st.form_submit_button("💾 Registrar"):
+            if st.form_submit_button("💾 Guardar"):
+                # Conversión automática para guardar todo unificado en BD
+                monto_a_guardar_bs = m_monto_input
+                if moneda_pago == "USD":
+                    monto_a_guardar_bs = m_monto_input * tasa_calc
+                
                 if not m_ref: m_ref = f"MAN-{int(time.time())}"
-                res = registrar_manual(m_monto, m_ref, m_metodo, m_plan, m_tipo, m_nombre, m_ced)
+                
+                res = registrar_manual(monto_a_guardar_bs, m_ref, m_metodo, m_plan, m_tipo, m_nombre, m_ced)
                 if res: 
-                    st.toast("Pago Registrado")
-                    time.sleep(1)
+                    st.success(f"Pago Registrado: {monto_a_guardar_bs:,.2f} Bs")
+                    time.sleep(1.5)
                     st.rerun()
 
     st.write("---")
@@ -241,12 +259,6 @@ with st.sidebar:
         txt_rango = f"{d1} al {d2}"
 
     st.write("---")
-    tasa_api = get_tasa_bcv()
-    tasa_calc = tasa_api if tasa_api else st.number_input("Tasa Manual", value=60.0)
-    if tasa_api: st.success(f"✅ BCV: {tasa_calc:,.2f} Bs")
-    else: st.warning("⚠️ Manual")
-
-    st.write("---")
     if st.button("Cerrar Sesión"):
         st.session_state['logged_in'] = False
         st.rerun()
@@ -260,93 +272,114 @@ df = pd.DataFrame(raw) if raw else pd.DataFrame()
 if df.empty:
     st.info("Sin registros.")
 else:
+    # 1. Procesar Fechas (CRÍTICO: Conversión UTC -> VZLA)
     df['monto_real'] = df['monto'].apply(limpiar_monto_ve)
-    df['fecha_dt'] = pd.to_datetime(df['created_at'])
-    if df['fecha_dt'].dt.tz is None: df['fecha_dt'] = df['fecha_dt'].dt.tz_localize('UTC')
-    df['fecha_ve'] = df['fecha_dt'].dt.tz_convert('America/Caracas')
-    df['fecha_fmt'] = df['fecha_ve'].dt.strftime('%d/%m %I:%M %p')
     
-    # Asegurar columnas nuevas
+    # Supabase devuelve string UTC, convertimos explícitamente
+    df['fecha_dt'] = pd.to_datetime(df['created_at'])
+    if df['fecha_dt'].dt.tz is None: 
+        df['fecha_dt'] = df['fecha_dt'].dt.tz_localize('UTC')
+    
+    # Convertir a America/Caracas (-04:00)
+    df['fecha_ve'] = df['fecha_dt'].dt.tz_convert('America/Caracas')
+    df['fecha_fmt'] = df['fecha_ve'].dt.strftime('%d/%m %I:%M %p') # Formato 12h
+    
+    # Asegurar columnas
     if 'nombre_cliente' not in df.columns: df['nombre_cliente'] = ""
     if 'cedula_cliente' not in df.columns: df['cedula_cliente'] = ""
     if 'metodo_pago' not in df.columns: df['metodo_pago'] = "Pago Móvil"
 
-    # Filtrar Fecha
+    # 2. Filtrar Fecha
     mask = pd.Series([True]*len(df))
-    if filtro_fecha == "Hoy": mask = df['fecha_ve'].dt.date == hoy.date()
-    elif filtro_fecha == "Ayer": mask = df['fecha_ve'].dt.date == (hoy - timedelta(days=1)).date()
-    elif filtro_fecha == "Semana Actual": mask = df['fecha_ve'].dt.date >= (hoy.date() - timedelta(days=hoy.weekday()))
-    elif filtro_fecha == "Mes Actual": mask = (df['fecha_ve'].dt.month == hoy.month) & (df['fecha_ve'].dt.year == hoy.year)
-    elif filtro_fecha == "Rango": mask = (df['fecha_ve'].dt.date >= ini) & (df['fecha_ve'].dt.date <= fin)
+    # Importante: usar fecha_ve (hora venezuela) para filtrar
+    fecha_ve_date = df['fecha_ve'].dt.date
+    hoy_date = datetime.now(df['fecha_ve'].dt.tz).date() # Fecha actual Vzla
+
+    if filtro_fecha == "Hoy": mask = fecha_ve_date == hoy_date
+    elif filtro_fecha == "Ayer": mask = fecha_ve_date == (hoy_date - timedelta(days=1))
+    elif filtro_fecha == "Semana Actual": mask = fecha_ve_date >= (hoy_date - timedelta(days=hoy_date.weekday()))
+    elif filtro_fecha == "Mes Actual": mask = (df['fecha_ve'].dt.month == hoy_date.month) & (df['fecha_ve'].dt.year == hoy_date.year)
+    elif filtro_fecha == "Rango": mask = (fecha_ve_date >= ini) & (fecha_ve_date <= fin)
     
     df_f = df[mask].copy()
 
     # BUSCADOR
-    busqueda = st.text_input("🔍 Buscar por Cédula, Nombre o Referencia", placeholder="Ej: 24.000.000 o Pedro")
+    busqueda = st.text_input("🔍 Buscar Cliente, Cédula o Referencia", placeholder="Ej: Perez...")
     if busqueda:
         df_f = df_f[df_f['referencia'].astype(str).str.contains(busqueda, case=False) | 
                     df_f['nombre_cliente'].astype(str).str.contains(busqueda, case=False) |
                     df_f['cedula_cliente'].astype(str).str.contains(busqueda, case=False)]
 
-    # --- VISTA GERENCIA (GRÁFICAS PLOTLY MEJORADAS) ---
+    # 3. CALCULO DE TOTALES (SOLO PAGOS YA CLASIFICADOS)
+    # Filtramos solo los que tienen Plan asignado para sumar
+    df_calc = df_f[df_f['servicio'].notnull() & (df_f['servicio'] != "")]
+    
+    # --- VISTA GERENCIA ---
     if st.session_state['user_role'] == 'admin':
-        tot_bs = df_f['monto_real'].sum()
+        tot_bs = df_calc['monto_real'].sum()
         tot_usd = tot_bs / tasa_calc if tasa_calc > 0 else 0
         
         c1, c2, c3 = st.columns(3)
         c1.metric("Ingresos (Bs)", f"{tot_bs:,.2f}")
-        c2.metric("Estimado (USD)", f"{tot_usd:,.2f}")
-        c3.download_button("📂 Reporte Gerencial", data=generar_excel_pro(df_f, tasa_calc, txt_rango), file_name="Reporte_Gym.xlsx", type="primary")
+        c2.metric("Total (USD)", f"{tot_usd:,.2f}")
+        c3.download_button("📂 Descargar Reporte", data=generar_excel_pro(df_calc, tasa_calc, txt_rango), file_name="Cierre_Gym.xlsx", type="primary")
         
-        # --- GRÁFICAS PLOTLY ---
-        if not df_f.empty:
+        # --- GRÁFICAS MEJORADAS (COLORES PERSONALIZADOS) ---
+        if not df_calc.empty:
             st.write("")
             col_g1, col_g2 = st.columns(2)
             
-            # Gráfica 1: Planes Vendidos (Barras Naranja)
             with col_g1:
-                df_planes = df_f['servicio'].value_counts().reset_index()
+                df_planes = df_calc['servicio'].value_counts().reset_index()
                 df_planes.columns = ['Plan', 'Cantidad']
+                
+                # Mapa de colores específico
+                colores_planes = {
+                    "PLAN COMÚN": "#3498db",      # Azul
+                    "PLAN VIP": "#f1c40f",        # Dorado/Amarillo
+                    "VISITA DIARIA": "#2ecc71"    # Verde
+                }
+                
                 fig_planes = px.bar(
                     df_planes, x='Plan', y='Cantidad', 
                     title="📊 Planes Más Vendidos",
                     text='Cantidad',
-                    color_discrete_sequence=['#fca311'] # Naranja Gym
+                    color='Plan',
+                    color_discrete_map=colores_planes # Aplica colores
                 )
                 fig_planes.update_layout(
                     plot_bgcolor="#161a25", paper_bgcolor="#161a25",
-                    font=dict(color="white"),
+                    font=dict(color="white"), showlegend=False,
                     xaxis=dict(showgrid=False), yaxis=dict(showgrid=True, gridcolor='#333')
                 )
                 st.plotly_chart(fig_planes, use_container_width=True)
             
-            # Gráfica 2: Métodos de Pago (Dona)
             with col_g2:
-                df_metodos = df_f['metodo_pago'].value_counts().reset_index()
+                df_metodos = df_calc['metodo_pago'].value_counts().reset_index()
                 df_metodos.columns = ['Método', 'Cantidad']
                 fig_pie = px.pie(
                     df_metodos, names='Método', values='Cantidad',
                     title="💳 Métodos de Pago",
                     hole=0.4,
-                    color_discrete_sequence=px.colors.sequential.RdBu # Colores elegantes
+                    color_discrete_sequence=px.colors.sequential.RdBu
                 )
                 fig_pie.update_layout(
                     plot_bgcolor="#161a25", paper_bgcolor="#161a25",
                     font=dict(color="white")
                 )
                 st.plotly_chart(fig_pie, use_container_width=True)
-
         st.divider()
 
     # --- LISTA DE PAGOS ---
     if df_f.empty:
-        st.warning("No se encontraron pagos con estos filtros.")
+        st.warning("No se encontraron pagos.")
     else:
-        st.subheader(f"Listado ({len(df_f)})")
+        st.subheader(f"Movimientos ({len(df_f)})")
         for i, row in df_f.iterrows():
             cedula_show = row.get('cedula_cliente', '') or 'Sin C.I'
             nombre_show = row['nombre_cliente'] if row['nombre_cliente'] else 'Sin Nombre'
             
+            # Estado: Verde si tiene Plan, Rojo si no
             ready = row['servicio'] and row['tipo_cliente'] and row['nombre_cliente']
             color = "#2ecc71" if ready else "#e74c3c"
             
@@ -355,18 +388,22 @@ else:
                 cols[0].markdown(f"<div style='height:100%; width:5px; background-color:{color}; border-radius:5px;'></div>", unsafe_allow_html=True)
                 
                 with cols[1]:
-                    st.markdown(f"**{nombre_show}** ({cedula_show})")
-                    st.caption(f"Ref: {row['referencia']} | {row['metodo_pago']}")
+                    st.markdown(f"**{nombre_show}**")
+                    st.caption(f"C.I: {cedula_show} | Ref: {row['referencia']}")
                 
                 with cols[2]:
+                    # Mostrar monto original
                     st.markdown(f"**Bs. {row['monto']}**")
+                    # Mostrar equivalente USD si aplica
+                    if tasa_calc > 0:
+                        equiv_usd = row['monto_real'] / tasa_calc
+                        st.caption(f"({equiv_usd:,.2f} $)")
                     st.caption(f"{row['fecha_fmt']}")
                 
                 with cols[3]:
                     with st.popover("Editar"):
                         st.write(f"Editar: {row['referencia']}")
                         
-                        # Campos de edición
                         e_ced = st.text_input("Cédula", value=cedula_show if cedula_show != 'Sin C.I' else "", key=f"c_{row['id']}")
                         e_nom = st.text_input("Nombre", value=nombre_show if nombre_show != 'Sin Nombre' else "", key=f"n_{row['id']}")
                         
@@ -380,8 +417,11 @@ else:
                         p_met = st.selectbox("Método", METODOS_PAGO, index=ix_m, key=f"mt_{row['id']}")
                         
                         if st.button("Guardar Cambios", key=f"sv_{row['id']}"):
-                            actualizar_pago(row['id'], p_plan, p_tipo, e_nom, e_ced, p_met)
-                            st.rerun()
+                            res = actualizar_pago(row['id'], p_plan, p_tipo, e_nom, e_ced, p_met)
+                            if res:
+                                st.success("✅ Pago Registrado")
+                                time.sleep(1)
+                                st.rerun()
                         
                         if st.session_state['user_role'] == 'admin':
                             st.divider()
